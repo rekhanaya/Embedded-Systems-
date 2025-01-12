@@ -1,0 +1,139 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+// Informasi Wi-Fi
+const char* ssid = "*******";         // Nama Wi-Fi Anda
+const char* password = "********"; // Password Wi-Fi Anda
+
+// Informasi Bot Telegram
+const String botToken = "******"; // Ganti dengan token bot Anda
+const String chatID = "******";              // Ganti dengan Chat ID Anda
+
+// Deklarasi pin
+#define MQ2_PIN 34         // Pin analog untuk sensor MQ-2
+#define GREEN_LIGHT 21     // Pin lampu hijau
+#define YELLOW_LIGHT 19    // Pin lampu kuning
+#define RED_LIGHT 18      // Pin lampu merah
+#define BUZZER_PIN 32      // Pin buzzer
+#define RELAY_PIN 33      // Pin relay untuk exhaust fan
+
+// Threshold untuk gas
+const int DANGEROUS_THRESHOLD = 900;
+const int WARNING_THRESHOLD = 600;
+
+void setup() {
+  Serial.begin(115200); // Inisialisasi Serial Monitor
+
+  // Atur pin sebagai output
+  pinMode(GREEN_LIGHT, OUTPUT);
+  pinMode(YELLOW_LIGHT, OUTPUT);
+  pinMode(RED_LIGHT, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(MQ2_PIN, INPUT);
+
+  // Matikan semua output pada awal
+  digitalWrite(GREEN_LIGHT, LOW);
+  digitalWrite(YELLOW_LIGHT, LOW);
+  digitalWrite(RED_LIGHT, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(RELAY_PIN, HIGH); // Matikan relay (exhaust fan)
+
+  Serial.println("Gas Leak Detection System Initialized");
+
+  // Hubungkan ke Wi-Fi
+  Serial.println("Menghubungkan ke Wi-Fi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Menghubungkan...");
+  }
+  Serial.println("Terhubung ke Wi-Fi");
+}
+
+void loop() {
+  // Membaca nilai dari sensor MQ-2
+  int mq2Value = analogRead(MQ2_PIN);
+
+  // Konversi nilai analog ke tingkat gas (0-1000 ppm)
+  int gasLevel = map(mq2Value, 0, 4095, 0, 1000);
+
+  Serial.print("Gas Level: ");
+  Serial.println(gasLevel);
+
+  String message;
+
+  // Logika untuk traffic light, buzzer, dan exhaust fan
+  if (gasLevel > DANGEROUS_THRESHOLD) { // Gas berbahaya
+    Serial.println("Status: DANGEROUS");
+
+    // Lampu merah menyala
+    digitalWrite(RED_LIGHT, HIGH);
+    digitalWrite(YELLOW_LIGHT, LOW);
+    digitalWrite(GREEN_LIGHT, LOW);
+
+    // Hidupkan buzzer dan exhaust fan
+    digitalWrite(BUZZER_PIN, HIGH);
+    digitalWrite(RELAY_PIN, LOW); // Hidupkan exhaust fan
+
+    Serial.println("Buzzer menyala, exhaust fan aktif.");
+
+    // Kirim notifikasi ke Telegram
+    message = "\u26A0\uFE0F BAHAYA! Tingkat gas sangat tinggi: " + String(gasLevel) + " ppm.";
+    sendTelegramNotification(message);
+
+  } else if (gasLevel > WARNING_THRESHOLD) { // Gas peringatan
+    Serial.println("Status: WARNING");
+
+    // Lampu kuning menyala
+    digitalWrite(RED_LIGHT, LOW);
+    digitalWrite(YELLOW_LIGHT, HIGH);
+    digitalWrite(GREEN_LIGHT, HIGH);
+
+    // Hidupkan exhaust fan, matikan buzzer
+    digitalWrite(BUZZER_PIN, LOW);
+    digitalWrite(RELAY_PIN, LOW);
+
+    Serial.println("Exhaust fan aktif, buzzer mati.");
+
+    // Kirim notifikasi ke Telegram
+    message = "\u26A0\uFE0F PERINGATAN ⚠ Tingkat gas sedang: " + String(gasLevel) + " ppm.";
+    sendTelegramNotification(message);
+    
+  } else { // Gas aman
+    Serial.println("Status: SAFE");
+
+    // Lampu hijau menyala
+    digitalWrite(RED_LIGHT, LOW);
+    digitalWrite(YELLOW_LIGHT, LOW);
+    digitalWrite(GREEN_LIGHT, HIGH);
+
+    // Matikan buzzer dan exhaust fan
+    digitalWrite(BUZZER_PIN, LOW);
+    digitalWrite(RELAY_PIN, HIGH);
+
+    Serial.println("Buzzer mati, exhaust fan mati.");
+  }
+
+  delay(1000); // Delay 1 detik sebelum pembacaan berikutnya
+}
+
+void sendTelegramNotification(String message) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = "https://api.telegram.org/bot" + botToken + "/sendMessage?chat_id=" + chatID + "&text=" + message;
+
+    http.begin(url);
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+      Serial.println("Pesan terkirim: " + message);
+    } else {
+      Serial.println("Gagal mengirim pesan.");
+    }
+
+    http.end();
+  } else {
+    Serial.println("Tidak terhubung ke Wi-Fi.");
+  }
+}
